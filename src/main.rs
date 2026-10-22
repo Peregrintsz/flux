@@ -40,22 +40,22 @@ impl Theme {
     fn palette(self) -> Palette {
         match self {
             Self::Dark => Palette {
-                bg: Color32::from_rgb(20, 20, 22),
-                panel: Color32::from_rgb(29, 30, 33),
-                panel_light: Color32::from_rgb(42, 43, 47),
-                accent: Color32::from_rgb(235, 235, 238),
-                muted: Color32::from_rgb(155, 157, 164),
-                border: Color32::from_rgb(52, 53, 58),
-                text: Color32::from_rgb(238, 239, 242),
+                bg: Color32::from_rgb(24, 25, 27),
+                panel: Color32::from_rgb(34, 35, 38),
+                panel_light: Color32::from_rgb(46, 48, 52),
+                accent: Color32::from_rgb(91, 98, 108),
+                muted: Color32::from_rgb(168, 170, 176),
+                border: Color32::from_rgb(59, 61, 66),
+                text: Color32::from_rgb(218, 219, 222),
             },
             Self::Light => Palette {
-                bg: Color32::from_rgb(246, 247, 248),
-                panel: Color32::WHITE,
-                panel_light: Color32::from_rgb(237, 239, 242),
-                accent: Color32::from_rgb(36, 39, 44),
-                muted: Color32::from_rgb(105, 111, 120),
-                border: Color32::from_rgb(229, 231, 234),
-                text: Color32::from_rgb(36, 39, 44),
+                bg: Color32::from_rgb(234, 235, 237),
+                panel: Color32::from_rgb(243, 244, 245),
+                panel_light: Color32::from_rgb(226, 228, 231),
+                accent: Color32::from_rgb(61, 66, 73),
+                muted: Color32::from_rgb(87, 92, 100),
+                border: Color32::from_rgb(210, 212, 216),
+                text: Color32::from_rgb(43, 46, 51),
             },
         }
     }
@@ -228,6 +228,7 @@ impl eframe::App for ClickerApp {
         }
 
         let palette = self.theme.palette();
+        ui.painter().rect_filled(ui.max_rect(), 0.0, palette.bg);
         egui::Frame::new()
             .fill(palette.bg)
             .inner_margin(egui::Margin::same(22))
@@ -273,14 +274,18 @@ impl eframe::App for ClickerApp {
 impl ClickerApp {
     fn theme_options(&mut self, ui: &mut egui::Ui, palette: Palette) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Theme").size(13.0).color(palette.muted));
-            egui::ComboBox::from_id_salt("theme")
-                .selected_text(match self.theme { Theme::Dark => "Dark", Theme::Light => "Light" })
-                .width(110.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.theme, Theme::Dark, "Dark");
-                    ui.selectable_value(&mut self.theme, Theme::Light, "Light");
-                });
+            ui.label(RichText::new("Appearance").size(13.0).color(palette.muted));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let next_theme = if self.theme == Theme::Dark { "Switch to Light" } else { "Switch to Dark" };
+                if ui.add(
+                    egui::Button::new(RichText::new(next_theme).size(12.0).color(palette.text))
+                        .fill(palette.panel_light)
+                        .stroke(Stroke::new(1.0, palette.border))
+                        .corner_radius(6.0),
+                ).clicked() {
+                    self.theme = if self.theme == Theme::Dark { Theme::Light } else { Theme::Dark };
+                }
+            });
         });
     }
 
