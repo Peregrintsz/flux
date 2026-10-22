@@ -234,7 +234,7 @@ impl eframe::App for ClickerApp {
             .inner_margin(egui::Margin::same(22))
             .show(ui, |ui| {
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                    self.theme_options(ui, palette);
+                    self.top_bar(ui, palette);
                     ui.add_space(14.0);
                     self.status_card(ui);
                     ui.add_space(17.0);
@@ -272,9 +272,10 @@ impl eframe::App for ClickerApp {
 }
 
 impl ClickerApp {
-    fn theme_options(&mut self, ui: &mut egui::Ui, palette: Palette) {
+    fn top_bar(&mut self, ui: &mut egui::Ui, palette: Palette) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Appearance").size(13.0).color(palette.muted));
+            draw_flux_mark(ui, 30.0);
+            ui.add_space(8.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let next_theme = if self.theme == Theme::Dark { "Switch to Light" } else { "Switch to Dark" };
                 if ui.add(
@@ -387,6 +388,30 @@ impl ClickerApp {
         if ui.add_sized(Vec2::new(ui.available_width(), 42.0), egui::Button::new(RichText::new(text).size(14.0).strong().color(Color32::WHITE)).fill(color).corner_radius(7.0)).clicked() {
             self.set_enabled(!self.enabled);
         }
+    }
+}
+
+fn draw_flux_mark(ui: &mut egui::Ui, size: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, egui::CornerRadius::same(7), Color32::from_rgb(16, 17, 19));
+
+    let scale = size / 128.0;
+    let polygons = [
+        [(42.0, 24.0), (55.0, 42.0), (47.0, 104.0), (30.0, 104.0)],
+        [(42.0, 24.0), (102.0, 24.0), (91.0, 42.0), (55.0, 42.0)],
+        [(48.0, 53.0), (83.0, 53.0), (73.0, 71.0), (45.0, 71.0)],
+    ];
+    for polygon in polygons {
+        let points = polygon
+            .iter()
+            .map(|(x, y)| egui::pos2(rect.left() + x * scale, rect.top() + y * scale))
+            .collect();
+        painter.add(egui::Shape::convex_polygon(
+            points,
+            Color32::from_rgb(242, 243, 245),
+            Stroke::NONE,
+        ));
     }
 }
 
