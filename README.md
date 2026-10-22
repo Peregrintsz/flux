@@ -3,7 +3,7 @@
   <h1>Flux</h1>
   <p><strong>A compact, fast desktop autoclicker written in Rust.</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/version-0.1.0-white?style=flat-square&labelColor=111111" alt="Version 0.1.0">
+    <img src="https://img.shields.io/badge/version-0.2.0-white?style=flat-square&labelColor=111111" alt="Version 0.2.0">
     <img src="https://img.shields.io/badge/built_with-Rust-white?style=flat-square&labelColor=111111" alt="Built with Rust">
     <img src="https://img.shields.io/badge/license-MIT-white?style=flat-square&labelColor=111111" alt="MIT license">
   </p>
