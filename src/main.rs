@@ -10,19 +10,19 @@ use std::{
     time::Duration,
 };
 
-use eframe::egui::{self, Align, Color32, FontId, Layout, RichText, Stroke, Vec2};
+use eframe::egui::{self, Align, Color32, Layout, RichText, Stroke, Vec2};
 use enigo::{Button, Direction, Enigo, Mouse, Settings};
 use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
-    hotkey::{Code, HotKey},
+    hotkey::{HotKey, Modifiers},
 };
 
-const BG: Color32 = Color32::from_rgb(13, 17, 25);
-const PANEL: Color32 = Color32::from_rgb(22, 28, 39);
-const PANEL_LIGHT: Color32 = Color32::from_rgb(29, 37, 51);
-const ACCENT: Color32 = Color32::from_rgb(125, 92, 255);
-const MUTED: Color32 = Color32::from_rgb(143, 154, 174);
-const GREEN: Color32 = Color32::from_rgb(65, 211, 155);
+const BG: Color32 = Color32::from_rgb(246, 247, 248);
+const PANEL: Color32 = Color32::WHITE;
+const PANEL_LIGHT: Color32 = Color32::from_rgb(237, 239, 242);
+const ACCENT: Color32 = Color32::from_rgb(36, 39, 44);
+const MUTED: Color32 = Color32::from_rgb(105, 111, 120);
+const GREEN: Color32 = Color32::from_rgb(39, 133, 87);
 
 #[derive(Clone, Copy, PartialEq)]
 enum ClickButton {
@@ -55,51 +55,6 @@ enum SpeedMode {
     Milliseconds,
 }
 
-#[derive(Clone, Copy)]
-enum KeyChoice {
-    F6,
-    F7,
-    F8,
-    F9,
-    F10,
-    F11,
-    F12,
-}
-
-impl KeyChoice {
-    const ALL: [Self; 7] = [
-        Self::F6, Self::F7, Self::F8, Self::F9, Self::F10, Self::F11, Self::F12,
-    ];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::F6 => "F6",
-            Self::F7 => "F7",
-            Self::F8 => "F8",
-            Self::F9 => "F9",
-            Self::F10 => "F10",
-            Self::F11 => "F11",
-            Self::F12 => "F12",
-        }
-    }
-
-    fn code(self) -> Code {
-        match self {
-            Self::F6 => Code::F6,
-            Self::F7 => Code::F7,
-            Self::F8 => Code::F8,
-            Self::F9 => Code::F9,
-            Self::F10 => Code::F10,
-            Self::F11 => Code::F11,
-            Self::F12 => Code::F12,
-        }
-    }
-
-    fn hotkey(self) -> HotKey {
-        HotKey::new(None, self.code())
-    }
-}
-
 #[derive(Clone, Copy, PartialEq)]
 struct ClickSettings {
     button: ClickButton,
@@ -116,7 +71,9 @@ struct ClickerApp {
     mode: SpeedMode,
     cps: u32,
     milliseconds: u32,
-    key: KeyChoice,
+    hotkey: HotKey,
+    hotkey_label: String,
+    capturing_hotkey: bool,
     enabled: bool,
     clicks: Arc<AtomicU64>,
     last_settings: ClickSettings,
@@ -136,9 +93,8 @@ impl ClickerApp {
             .spawn(move || click_worker(worker_rx, worker_clicks))
             .expect("Could not start click worker thread");
 
-        let key = KeyChoice::F6;
+        let hotkey = HotKey::try_from("F6").expect("F6 is a valid hotkey");
         let hotkey_manager = GlobalHotKeyManager::new().expect("Could not initialize hotkey manager");
-        let hotkey = key.hotkey();
         let error = hotkey_manager
             .register(hotkey)
             .err()
@@ -154,7 +110,9 @@ impl ClickerApp {
             mode: SpeedMode::Cps,
             cps: 10,
             milliseconds: 100,
-            key,
+            hotkey,
+            hotkey_label: "F6".to_owned(),
+            capturing_hotkey: false,
             enabled: false,
             clicks,
             last_settings: settings,
@@ -185,15 +143,22 @@ impl ClickerApp {
         let _ = self.worker_tx.send(WorkerCommand::SetEnabled(enabled));
     }
 
-    fn register_key(&mut self, next: KeyChoice) {
-        let next_hotkey = next.hotkey();
-        if let Err(error) = self.hotkey_manager.register(next_hotkey) {
-            self.error = Some(format!("Could not register {}: {error}", next.label()));
+    fn register_hotkey(&mut self, next_hotkey: HotKey, label: String) {
+        if self.hotkey == next_hotkey {
+            self.hotkey_label = label;
+            self.capturing_hotkey = false;
             return;
         }
-        let _ = self.hotkey_manager.unregister(self.key.hotkey());
-        self.key = next;
+        if let Err(error) = self.hotkey_manager.register(next_hotkey) {
+            self.error = Some(format!("Could not register shortcut: {error}"));
+            self.capturing_hotkey = false;
+            return;
+        }
+        let _ = self.hotkey_manager.unregister(self.hotkey);
+        self.hotkey = next_hotkey;
+        self.hotkey_label = label;
         self.hotkey_id = next_hotkey.id();
+        self.capturing_hotkey = false;
         self.error = None;
     }
 }
@@ -201,48 +166,60 @@ impl ClickerApp {
 impl eframe::App for ClickerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-            if event.id == self.hotkey_id && event.state == HotKeyState::Pressed {
-                self.set_enabled(!self.enabled);
+        if self.capturing_hotkey {
+            let captured = ctx.input(|input| {
+                input.events.iter().find_map(|event| match event {
+                    egui::Event::Key { key, physical_key, pressed: true, repeat: false, modifiers } => {
+                        make_hotkey(physical_key.unwrap_or(*key), *modifiers)
+                    }
+                    _ => None,
+                })
+            });
+            if let Some((hotkey, label)) = captured {
+                self.register_hotkey(hotkey, label);
+            }
+            while GlobalHotKeyEvent::receiver().try_recv().is_ok() {}
+        } else {
+            while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+                if event.id == self.hotkey_id && event.state == HotKeyState::Pressed {
+                    self.set_enabled(!self.enabled);
+                }
             }
         }
 
         egui::Frame::new()
             .fill(BG)
-            .inner_margin(egui::Margin::same(20))
+            .inner_margin(egui::Margin::same(22))
             .show(ui, |ui| {
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
                     ui.horizontal(|ui| {
-                        draw_flux_mark(ui, 36.0);
-                        ui.add_space(3.0);
+                        draw_flux_mark(ui, 32.0);
+                        ui.add_space(9.0);
                         ui.vertical(|ui| {
-                            ui.label(RichText::new("FLUX").font(FontId::proportional(21.0)).strong().color(Color32::WHITE));
-                    ui.label(RichText::new("COMPACT AUTO CLICKER").size(12.0).color(MUTED));
-                        });
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(RichText::new("v0.1.0").size(11.0).color(MUTED));
+                            ui.label(RichText::new("Flux").size(20.0).strong().color(ACCENT));
+                            ui.label(RichText::new("Auto clicker").size(12.0).color(MUTED));
                         });
                     });
 
-                    ui.add_space(17.0);
+                    ui.add_space(20.0);
                     self.status_card(ui);
-                    ui.add_space(14.0);
-                    self.section_title(ui, "CLICK SETTINGS", "01");
-                    ui.add_space(8.0);
+                    ui.add_space(17.0);
+                    self.section_title(ui, "Mouse button");
+                    ui.add_space(7.0);
                     self.click_options(ui);
-                    ui.add_space(14.0);
-                    self.section_title(ui, "SPEED", "02");
-                    ui.add_space(8.0);
+                    ui.add_space(16.0);
+                    self.section_title(ui, "Click speed");
+                    ui.add_space(7.0);
                     self.speed_options(ui);
-                    ui.add_space(14.0);
-                    self.section_title(ui, "HOTKEY", "03");
-                    ui.add_space(8.0);
+                    ui.add_space(16.0);
+                    self.section_title(ui, "Toggle shortcut");
+                    ui.add_space(7.0);
                     self.hotkey_options(ui);
-                    ui.add_space(15.0);
+                    ui.add_space(18.0);
                     self.start_button(ui);
                     if let Some(error) = &self.error {
                         ui.add_space(8.0);
-                        ui.label(RichText::new(error).size(12.0).color(Color32::from_rgb(255, 128, 128)));
+                        ui.label(RichText::new(error).size(12.0).color(Color32::from_rgb(180, 55, 55)));
                     }
                 });
             });
@@ -260,44 +237,41 @@ impl ClickerApp {
     fn status_card(&self, ui: &mut egui::Ui) {
         egui::Frame::new()
             .fill(PANEL)
-            .stroke(Stroke::new(1.0, Color32::from_rgb(40, 49, 65)))
-            .corner_radius(12.0)
-            .inner_margin(14.0)
+            .stroke(Stroke::new(1.0, Color32::from_rgb(229, 231, 234)))
+            .corner_radius(8.0)
+            .inner_margin(12.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let dot = if self.enabled { GREEN } else { MUTED };
                     let (dot_rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
                     ui.painter().circle_filled(dot_rect.center(), 4.0, dot);
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(if self.enabled { "Clicking is active" } else { "Ready" }).strong().color(Color32::WHITE));
-                        ui.label(RichText::new(format!("{} clicks sent", self.clicks.load(Ordering::Relaxed))).size(12.0).color(MUTED));
+                        ui.label(RichText::new(if self.enabled { "Running" } else { "Ready" }).strong().color(ACCENT));
+                        ui.label(RichText::new(format!("{} clicks", self.clicks.load(Ordering::Relaxed))).size(12.0).color(MUTED));
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{} ms", self.interval().as_millis())).font(FontId::monospace(13.0)).color(if self.enabled { GREEN } else { Color32::WHITE }));
+                        ui.label(RichText::new(format!("{} ms", self.interval().as_millis())).color(MUTED));
                     });
                 });
             });
     }
 
-    fn section_title(&self, ui: &mut egui::Ui, title: &str, number: &str) {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(number).size(11.0).color(ACCENT).strong());
-            ui.label(RichText::new(title).size(11.0).color(MUTED).strong());
-        });
+    fn section_title(&self, ui: &mut egui::Ui, title: &str) {
+        ui.label(RichText::new(title).size(14.0).strong().color(ACCENT));
     }
 
     fn click_options(&mut self, ui: &mut egui::Ui) {
-        egui::Frame::new().fill(PANEL).corner_radius(11.0).inner_margin(5.0).show(ui, |ui| {
+        egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, Color32::from_rgb(229, 231, 234))).corner_radius(8.0).inner_margin(5.0).show(ui, |ui| {
             ui.horizontal(|ui| {
                 let item_width = (ui.available_width() - 12.0) / 3.0;
                 for value in [ClickButton::Left, ClickButton::Right, ClickButton::Middle] {
                     let selected = self.button == value;
                     let response = ui.add_sized(
-                        Vec2::new(item_width, 48.0),
-                        egui::Button::new(RichText::new(value.label().to_uppercase()).size(12.0).strong().color(if selected { Color32::WHITE } else { MUTED }))
-                            .fill(if selected { PANEL_LIGHT } else { PANEL })
-                            .stroke(Stroke::new(if selected { 1.0 } else { 0.0 }, ACCENT))
-                            .corner_radius(8.0),
+                        Vec2::new(item_width, 40.0),
+                        egui::Button::new(RichText::new(value.label()).size(13.0).color(if selected { Color32::WHITE } else { ACCENT }))
+                            .fill(if selected { ACCENT } else { PANEL })
+                            .stroke(Stroke::new(1.0, if selected { ACCENT } else { Color32::from_rgb(229, 231, 234) }))
+                            .corner_radius(6.0),
                     );
                     if response.clicked() { self.button = value; }
                 }
@@ -306,12 +280,12 @@ impl ClickerApp {
     }
 
     fn speed_options(&mut self, ui: &mut egui::Ui) {
-        egui::Frame::new().fill(PANEL).corner_radius(11.0).inner_margin(12.0).show(ui, |ui| {
+        egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, Color32::from_rgb(229, 231, 234))).corner_radius(8.0).inner_margin(10.0).show(ui, |ui| {
             ui.horizontal(|ui| {
                 let tab_width = (ui.available_width() - 8.0) / 2.0;
                 for (value, label) in [(SpeedMode::Cps, "CPS"), (SpeedMode::Milliseconds, "Milliseconds")] {
                     let selected = self.mode == value;
-                    if ui.add_sized(Vec2::new(tab_width, 31.0), egui::Button::new(RichText::new(label).size(12.0).color(if selected { Color32::WHITE } else { MUTED })).fill(if selected { ACCENT } else { PANEL_LIGHT }).corner_radius(7.0)).clicked() {
+                    if ui.add_sized(Vec2::new(tab_width, 30.0), egui::Button::new(RichText::new(label).size(13.0).color(if selected { Color32::WHITE } else { ACCENT })).fill(if selected { ACCENT } else { PANEL_LIGHT }).corner_radius(6.0)).clicked() {
                         self.mode = value;
                     }
                 }
@@ -322,7 +296,7 @@ impl ClickerApp {
                     SpeedMode::Cps => ("Speed", "clicks / sec", &mut self.cps),
                     SpeedMode::Milliseconds => ("Interval", "ms", &mut self.milliseconds),
                 };
-                ui.label(RichText::new(label).size(13.0).color(Color32::WHITE));
+                ui.label(RichText::new(label).size(13.0).color(ACCENT));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(RichText::new(suffix).size(11.0).color(MUTED));
                     ui.add(egui::DragValue::new(value).speed(1).min_decimals(0).max_decimals(0));
@@ -334,34 +308,93 @@ impl ClickerApp {
     }
 
     fn hotkey_options(&mut self, ui: &mut egui::Ui) {
-        egui::Frame::new().fill(PANEL).corner_radius(11.0).inner_margin(12.0).show(ui, |ui| {
+        egui::Frame::new().fill(PANEL).stroke(Stroke::new(1.0, Color32::from_rgb(229, 231, 234))).corner_radius(8.0).inner_margin(10.0).show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new("Start / stop").size(13.0).color(Color32::WHITE));
-                    ui.label(RichText::new("Works while the app is in the background").size(12.0).color(MUTED));
-                });
+                ui.label(RichText::new(if self.capturing_hotkey { "Press a key or combo" } else { "Shortcut" }).size(13.0).color(ACCENT));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    egui::ComboBox::from_id_salt("hotkey")
-                        .selected_text(RichText::new(self.key.label()).color(Color32::WHITE))
-                        .width(67.0)
-                        .show_ui(ui, |ui| {
-                            for choice in KeyChoice::ALL {
-                                if ui.selectable_label(self.key.label() == choice.label(), choice.label()).clicked() && self.key.label() != choice.label() {
-                                    self.register_key(choice);
-                                }
-                            }
-                        });
+                    let label = if self.capturing_hotkey { "Listening..." } else { &self.hotkey_label };
+                    if ui.add(egui::Button::new(RichText::new(label).strong().color(ACCENT)).fill(PANEL_LIGHT).corner_radius(6.0)).clicked() {
+                        self.capturing_hotkey = true;
+                        self.error = None;
+                    }
                 });
             });
         });
     }
 
     fn start_button(&mut self, ui: &mut egui::Ui) {
-        let (text, color) = if self.enabled { ("STOP", Color32::from_rgb(180, 68, 87)) } else { ("START", ACCENT) };
-        if ui.add_sized(Vec2::new(ui.available_width(), 46.0), egui::Button::new(RichText::new(text).size(14.0).strong().color(Color32::WHITE)).fill(color).corner_radius(10.0)).clicked() {
+        let (text, color) = if self.enabled { ("Stop", Color32::from_rgb(180, 68, 68)) } else { ("Start", ACCENT) };
+        if ui.add_sized(Vec2::new(ui.available_width(), 42.0), egui::Button::new(RichText::new(text).size(14.0).strong().color(Color32::WHITE)).fill(color).corner_radius(7.0)).clicked() {
             self.set_enabled(!self.enabled);
         }
     }
+}
+
+fn make_hotkey(key: egui::Key, modifiers: egui::Modifiers) -> Option<(HotKey, String)> {
+    let key_name = match key {
+        egui::Key::Num0 => "Digit0".to_owned(),
+        egui::Key::Num1 => "Digit1".to_owned(),
+        egui::Key::Num2 => "Digit2".to_owned(),
+        egui::Key::Num3 => "Digit3".to_owned(),
+        egui::Key::Num4 => "Digit4".to_owned(),
+        egui::Key::Num5 => "Digit5".to_owned(),
+        egui::Key::Num6 => "Digit6".to_owned(),
+        egui::Key::Num7 => "Digit7".to_owned(),
+        egui::Key::Num8 => "Digit8".to_owned(),
+        egui::Key::Num9 => "Digit9".to_owned(),
+        _ => format!("{key:?}"),
+    };
+    let code = HotKey::try_from(key_name.as_str()).ok()?.key;
+
+    let mut hotkey_modifiers = Modifiers::empty();
+    if modifiers.ctrl {
+        hotkey_modifiers |= Modifiers::CONTROL;
+    }
+    if modifiers.shift {
+        hotkey_modifiers |= Modifiers::SHIFT;
+    }
+    if modifiers.alt {
+        hotkey_modifiers |= Modifiers::ALT;
+    }
+    if modifiers.mac_cmd {
+        hotkey_modifiers |= Modifiers::SUPER;
+    }
+
+    let hotkey = HotKey::new(Some(hotkey_modifiers), code);
+    let mut label = Vec::new();
+    if hotkey_modifiers.contains(Modifiers::CONTROL) {
+        label.push("Ctrl".to_owned());
+    }
+    if hotkey_modifiers.contains(Modifiers::ALT) {
+        label.push("Alt".to_owned());
+    }
+    if hotkey_modifiers.contains(Modifiers::SHIFT) {
+        label.push("Shift".to_owned());
+    }
+    if hotkey_modifiers.contains(Modifiers::SUPER) {
+        label.push("Win".to_owned());
+    }
+    label.push(match key {
+        egui::Key::Num0 => "0".to_owned(),
+        egui::Key::Num1 => "1".to_owned(),
+        egui::Key::Num2 => "2".to_owned(),
+        egui::Key::Num3 => "3".to_owned(),
+        egui::Key::Num4 => "4".to_owned(),
+        egui::Key::Num5 => "5".to_owned(),
+        egui::Key::Num6 => "6".to_owned(),
+        egui::Key::Num7 => "7".to_owned(),
+        egui::Key::Num8 => "8".to_owned(),
+        egui::Key::Num9 => "9".to_owned(),
+        egui::Key::ArrowDown => "Down".to_owned(),
+        egui::Key::ArrowLeft => "Left".to_owned(),
+        egui::Key::ArrowRight => "Right".to_owned(),
+        egui::Key::ArrowUp => "Up".to_owned(),
+        egui::Key::PageDown => "Page Down".to_owned(),
+        egui::Key::PageUp => "Page Up".to_owned(),
+        _ => format!("{key:?}"),
+    });
+
+    Some((hotkey, label.join(" + ")))
 }
 
 fn draw_flux_mark(ui: &mut egui::Ui, size: f32) {
@@ -428,13 +461,14 @@ fn main() -> eframe::Result {
         "Flux",
         options,
         Box::new(|cc| {
-            let mut visuals = egui::Visuals::dark();
+            let mut visuals = egui::Visuals::light();
             visuals.panel_fill = BG;
             visuals.window_fill = BG;
             visuals.extreme_bg_color = PANEL;
-            visuals.widgets.inactive.bg_fill = PANEL_LIGHT;
-            visuals.widgets.hovered.bg_fill = Color32::from_rgb(42, 52, 70);
+            visuals.widgets.inactive.bg_fill = PANEL;
+            visuals.widgets.hovered.bg_fill = PANEL_LIGHT;
             visuals.selection.bg_fill = ACCENT;
+            visuals.override_text_color = Some(ACCENT);
             cc.egui_ctx.set_fonts(app_fonts());
             cc.egui_ctx.set_visuals(visuals);
             Ok(Box::new(ClickerApp::new()))

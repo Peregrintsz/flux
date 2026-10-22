@@ -17,7 +17,7 @@
 |:--|:--|
 | Mouse button | Left, right, or middle |
 | Click speed | CPS or milliseconds, with no preset upper limit |
-| Toggle hotkey | F6 through F12 |
+| Toggle hotkey | Record any key or key combination in the app |
 | Run state | Start/stop button or global hotkey |
 
 The click loop runs on a separate thread, so the interface stays responsive.
@@ -36,7 +36,7 @@ On Windows, the executable is created at `target/release/flux.exe`.
 
 - Enter a positive integer for CPS or milliseconds. The app keeps a minimum interval of 1 ms.
 - Some games and apps may block synthetic input.
-- The default global hotkey is F6.
+- Click the shortcut field, then press a key or key combination to assign it. The default shortcut is F6.
 
 ## License
 
