@@ -1,14 +1,26 @@
-# Flux
+<div align="center">
+  <img src="assets/flux-mark.svg" width="112" alt="Flux logo">
+  <h1>Flux</h1>
+  <p><strong>A compact, fast desktop autoclicker written in Rust.</strong></p>
+  <p>
+    <img src="https://img.shields.io/badge/version-0.1.0-white?style=flat-square&labelColor=111111" alt="Version 0.1.0">
+    <img src="https://img.shields.io/badge/built_with-Rust-white?style=flat-square&labelColor=111111" alt="Built with Rust">
+    <img src="https://img.shields.io/badge/license-MIT-white?style=flat-square&labelColor=111111" alt="MIT license">
+  </p>
+</div>
 
-A compact, fast desktop autoclicker written in Rust. First release: **0.1.0**.
+<hr>
 
 ## Features
 
-- Choose left, right, or middle mouse button.
-- Set the speed in CPS (clicks per second) or milliseconds.
-- Choose a global start/stop hotkey from F6–F12.
-- Start and stop with the UI button or hotkey.
-- The clicking loop runs on a separate thread.
+| Control | Options |
+|:--|:--|
+| Mouse button | Left, right, or middle |
+| Click speed | CPS or milliseconds, with no preset upper limit |
+| Toggle hotkey | F6 through F12 |
+| Run state | Start/stop button or global hotkey |
+
+The click loop runs on a separate thread, so the interface stays responsive.
 
 ## Run
 
@@ -22,10 +34,9 @@ On Windows, the executable is created at `target/release/flux.exe`.
 
 ## Notes
 
-- In CPS mode, the interval is calculated as `1000 / CPS` milliseconds. CPS ranges from 1 to 1,000.
-- The millisecond interval ranges from 1 to 60,000 ms.
+- Enter a positive integer for CPS or milliseconds. The app keeps a minimum interval of 1 ms.
 - Some games and apps may block synthetic input.
-- Choose a global hotkey between F6 and F12. The default is F6.
+- The default global hotkey is F6.
 
 ## License
 
