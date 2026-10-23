@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=assets/flux.ico");
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {

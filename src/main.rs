@@ -93,6 +93,25 @@ enum SpeedMode {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+enum ActivationMode {
+    Toggle,
+    Hold,
+}
+
+impl ActivationMode {
+    fn hotkey_enabled(self, enabled: bool, down: &mut bool, state: HotKeyState) -> bool {
+        let pressed = state == HotKeyState::Pressed;
+        let next = match self {
+            Self::Toggle if pressed && !*down => !enabled,
+            Self::Toggle => enabled,
+            Self::Hold => pressed,
+        };
+        *down = pressed;
+        next
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
 struct ClickSettings {
     button: ClickButton,
     interval: Duration,
@@ -105,6 +124,9 @@ enum WorkerCommand {
 
 struct ClickerApp {
     theme: Theme,
+    activation_mode: ActivationMode,
+    shortcut_down: bool,
+    waiting_for_release: bool,
     button: ClickButton,
     mode: SpeedMode,
     cps: u32,
@@ -145,6 +167,9 @@ impl ClickerApp {
 
         Self {
             theme: Theme::Dark,
+            activation_mode: ActivationMode::Toggle,
+            shortcut_down: false,
+            waiting_for_release: false,
             button: ClickButton::Left,
             mode: SpeedMode::Cps,
             cps: 10,
@@ -178,11 +203,15 @@ impl ClickerApp {
     }
 
     fn set_enabled(&mut self, enabled: bool) {
+        if self.enabled == enabled {
+            return;
+        }
         self.enabled = enabled;
         let _ = self.worker_tx.send(WorkerCommand::SetEnabled(enabled));
     }
 
     fn register_hotkey(&mut self, next_hotkey: HotKey, label: String) {
+        self.waiting_for_release = true;
         if self.hotkey == next_hotkey {
             self.hotkey_label = label;
             self.capturing_hotkey = false;
@@ -206,7 +235,7 @@ impl eframe::App for ClickerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let previous_theme = self.theme;
-        if self.capturing_hotkey {
+        if self.capturing_hotkey || self.waiting_for_release {
             let captured = ctx.input(|input| {
                 input.events.iter().find_map(|event| match event {
                     egui::Event::Key { key, physical_key, pressed: true, repeat: false, modifiers } => {
@@ -215,14 +244,22 @@ impl eframe::App for ClickerApp {
                     _ => None,
                 })
             });
-            if let Some((hotkey, label)) = captured {
-                self.register_hotkey(hotkey, label);
+            if self.capturing_hotkey {
+                if let Some((hotkey, label)) = captured {
+                    self.register_hotkey(hotkey, label);
+                }
             }
             while GlobalHotKeyEvent::receiver().try_recv().is_ok() {}
+            if self.waiting_for_release && ctx.input(|input| input.keys_down.is_empty()) {
+                self.waiting_for_release = false;
+            }
         } else {
             while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
-                if event.id == self.hotkey_id && event.state == HotKeyState::Pressed {
-                    self.set_enabled(!self.enabled);
+                if event.id == self.hotkey_id {
+                    let enabled = self.activation_mode.hotkey_enabled(
+                        self.enabled, &mut self.shortcut_down, event.state,
+                    );
+                    self.set_enabled(enabled);
                 }
             }
         }
@@ -246,7 +283,7 @@ impl eframe::App for ClickerApp {
                     ui.add_space(7.0);
                     self.speed_options(ui);
                     ui.add_space(16.0);
-                    self.section_title(ui, "Toggle shortcut");
+                    self.section_title(ui, "Activation");
                     ui.add_space(7.0);
                     self.hotkey_options(ui);
                     ui.add_space(18.0);
@@ -370,10 +407,32 @@ impl ClickerApp {
         let palette = self.theme.palette();
         egui::Frame::new().fill(palette.panel).stroke(Stroke::new(1.0, palette.border)).corner_radius(8.0).inner_margin(10.0).show(ui, |ui| {
             ui.horizontal(|ui| {
+                let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+                for (mode, label, hint) in [
+                    (ActivationMode::Toggle, "Toggle", "Press the shortcut to start or stop."),
+                    (ActivationMode::Hold, "Hold", "Click only while the shortcut is held."),
+                ] {
+                    let selected = self.activation_mode == mode;
+                    if ui.add_sized(
+                        Vec2::new(width, 30.0),
+                        egui::Button::new(RichText::new(label).color(if selected { Color32::WHITE } else { palette.text }))
+                            .fill(if selected { palette.accent } else { palette.panel_light })
+                            .corner_radius(6.0),
+                    ).on_hover_text(hint).clicked() && !selected {
+                        self.set_enabled(false);
+                        self.shortcut_down = false;
+                        self.activation_mode = mode;
+                    }
+                }
+            });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
                 ui.label(RichText::new(if self.capturing_hotkey { "Press a key or combo" } else { "Shortcut" }).size(13.0).color(palette.text));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let label = if self.capturing_hotkey { "Listening..." } else { &self.hotkey_label };
                     if ui.add(egui::Button::new(RichText::new(label).strong().color(palette.text)).fill(palette.panel_light).corner_radius(6.0)).clicked() {
+                        self.set_enabled(false);
+                        self.shortcut_down = false;
                         self.capturing_hotkey = true;
                         self.error = None;
                     }
@@ -384,6 +443,14 @@ impl ClickerApp {
 
     fn start_button(&mut self, ui: &mut egui::Ui) {
         let palette = self.theme.palette();
+        if self.activation_mode == ActivationMode::Hold {
+            ui.add_sized(
+                Vec2::new(ui.available_width(), 42.0),
+                egui::Button::new(RichText::new(format!("Hold {} to click", self.hotkey_label)).size(14.0).strong().color(palette.text))
+                    .fill(palette.panel_light).corner_radius(7.0).sense(egui::Sense::hover()),
+            );
+            return;
+        }
         let (text, color) = if self.enabled { ("Stop", Color32::from_rgb(180, 68, 68)) } else { ("Start", palette.accent) };
         if ui.add_sized(Vec2::new(ui.available_width(), 42.0), egui::Button::new(RichText::new(text).size(14.0).strong().color(Color32::WHITE)).fill(color).corner_radius(7.0)).clicked() {
             self.set_enabled(!self.enabled);
@@ -513,8 +580,8 @@ fn click_worker(rx: Receiver<WorkerCommand>, clicks: Arc<AtomicU64>) {
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([370.0, 590.0])
-            .with_min_inner_size([340.0, 540.0])
+            .with_inner_size([370.0, 620.0])
+            .with_min_inner_size([340.0, 580.0])
             .with_resizable(false)
             .with_title("Auto Clicker"),
         ..Default::default()
@@ -567,4 +634,37 @@ fn app_fonts() -> egui::FontDefinitions {
     }
 
     fonts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toggle_changes_once_per_press_and_stays_on_after_release() {
+        let mut down = false;
+        let mode = ActivationMode::Toggle;
+        assert!(mode.hotkey_enabled(false, &mut down, HotKeyState::Pressed));
+        assert!(mode.hotkey_enabled(true, &mut down, HotKeyState::Pressed));
+        assert!(mode.hotkey_enabled(true, &mut down, HotKeyState::Released));
+        assert!(!down);
+        assert!(!mode.hotkey_enabled(true, &mut down, HotKeyState::Pressed));
+    }
+
+    #[test]
+    fn hold_stops_on_release_and_can_start_again() {
+        let mut down = false;
+        let mode = ActivationMode::Hold;
+        assert!(mode.hotkey_enabled(false, &mut down, HotKeyState::Pressed));
+        assert!(mode.hotkey_enabled(true, &mut down, HotKeyState::Pressed));
+        assert!(!mode.hotkey_enabled(true, &mut down, HotKeyState::Released));
+        assert!(!down);
+        assert!(mode.hotkey_enabled(false, &mut down, HotKeyState::Pressed));
+    }
+
+    #[test]
+    fn hold_release_without_press_does_not_start_clicking() {
+        let mut down = false;
+        assert!(!ActivationMode::Hold.hotkey_enabled(false, &mut down, HotKeyState::Released));
+    }
 }
