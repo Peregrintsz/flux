@@ -3,7 +3,7 @@
   <h1>Flux</h1>
   <p><strong>A compact, fast desktop autoclicker written in Rust.</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/version-0.2.0-white?style=flat-square&labelColor=111111" alt="Version 0.2.0">
+    <img src="https://img.shields.io/badge/version-0.3.0-white?style=flat-square&labelColor=111111" alt="Version 0.3.0">
     <img src="https://img.shields.io/badge/built_with-Rust-white?style=flat-square&labelColor=111111" alt="Built with Rust">
     <img src="https://img.shields.io/badge/license-MIT-white?style=flat-square&labelColor=111111" alt="MIT license">
   </p>
@@ -17,12 +17,15 @@
 |:--|:--|
 | Mouse button | Left, right, or middle |
 | Click speed | CPS or milliseconds, with no preset upper limit |
-| Toggle hotkey | Record any key or key combination in the app |
-| Run state | Start/stop button or global hotkey |
+| Shortcut | Record any key or key combination in the app |
+| Activation | Toggle to start/stop, or Hold to click while pressed |
+| Run state | On-screen button or global shortcut |
 
 The click loop runs on a separate thread, so the interface stays responsive.
 
 ## Run
+
+For the portable Windows version, download `flux.exe` from the latest GitHub Release and run it. No installation is required.
 
 Install [Rust](https://www.rust-lang.org/tools/install), then run this in the project directory:
 
@@ -37,6 +40,8 @@ On Windows, the executable is created at `target/release/flux.exe`.
 - Enter a positive integer for CPS or milliseconds. The app keeps a minimum interval of 1 ms.
 - Some games and apps may block synthetic input.
 - Click the shortcut field, then press a key or key combination to assign it. The default shortcut is F6.
+- In Toggle mode, press the shortcut or Start/Stop to start or stop. In Hold mode, hold the shortcut; releasing it stops clicking.
+- Changing activation mode or recording a new shortcut stops the clicker.
 
 ## License
 
